@@ -1,0 +1,413 @@
+from rest_framework import generics, status
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
+from drf_spectacular.types import OpenApiTypes
+from .models import (
+    HeroSection, AboutSection, Partner, TeamMember, 
+    Service, InsightCategory, Insight, ContactInfo, ContactMessage, ApplicationForm
+)
+from .serializers import (
+    HeroSectionSerializer, AboutSectionSerializer, PartnerSerializer,
+    TeamMemberSerializer, ServiceSerializer, InsightCategorySerializer,
+    InsightListSerializer, InsightDetailSerializer, ContactInfoSerializer,
+    ContactMessageSerializer, ApplicationFormSerializer
+)
+
+
+@extend_schema(
+    summary="Получить Hero секции",
+    description="Возвращает список всех активных Hero секций (главных баннеров) в порядке сортировки",
+    tags=["Hero Section"],
+    responses={200: HeroSectionSerializer(many=True)}
+)
+class HeroSectionListView(generics.ListAPIView):
+    """Получение всех активных Hero секций"""
+    serializer_class = HeroSectionSerializer
+    
+    def get_queryset(self):
+        return HeroSection.objects.filter(is_active=True).order_by('order')
+
+
+@extend_schema(
+    summary="Получить информацию о компании",
+    description="Возвращает информацию о компании: описание, миссию, видение, ценности",
+    tags=["About"],
+    responses={200: AboutSectionSerializer}
+)
+class AboutSectionView(generics.RetrieveAPIView):
+    """Получение информации о компании"""
+    serializer_class = AboutSectionSerializer
+    
+    def get_object(self):
+        return AboutSection.objects.filter(is_active=True).first()
+
+
+@extend_schema(
+    summary="Получить список партнеров",
+    description="Возвращает список всех активных партнеров с их логотипами и описаниями",
+    tags=["Partners"],
+    responses={200: PartnerSerializer(many=True)}
+)
+class PartnerListView(generics.ListAPIView):
+    """Получение списка партнеров"""
+    serializer_class = PartnerSerializer
+    
+    def get_queryset(self):
+        return Partner.objects.filter(is_active=True).order_by('order', 'name')
+
+
+@extend_schema(
+    summary="Получить команду",
+    description="Возвращает список всех активных членов команды с их фотографиями, должностями и контактами",
+    tags=["Team"],
+    responses={200: TeamMemberSerializer(many=True)}
+)
+class TeamListView(generics.ListAPIView):
+    """Получение списка членов команды"""
+    serializer_class = TeamMemberSerializer
+    
+    def get_queryset(self):
+        return TeamMember.objects.filter(is_active=True).order_by('order', 'name')
+
+
+@extend_schema(
+    summary="Получить все услуги",
+    description="Возвращает полный список всех активных услуг с ценами, описаниями и особенностями",
+    tags=["Services"],
+    responses={200: ServiceSerializer(many=True)}
+)
+class ServiceListView(generics.ListAPIView):
+    """Получение списка услуг"""
+    serializer_class = ServiceSerializer
+    
+    def get_queryset(self):
+        return Service.objects.filter(is_active=True).order_by('order', 'title')
+
+
+@extend_schema(
+    summary="Получить рекомендуемые услуги",
+    description="Возвращает список только рекомендуемых (популярных) услуг для отображения на главной странице",
+    tags=["Services"],
+    responses={200: ServiceSerializer(many=True)}
+)
+class FeaturedServiceListView(generics.ListAPIView):
+    """Получение рекомендуемых услуг"""
+    serializer_class = ServiceSerializer
+    
+    def get_queryset(self):
+        return Service.objects.filter(is_active=True, is_featured=True).order_by('order', 'title')
+
+
+@extend_schema(
+    summary="Получить категории статей",
+    description="Возвращает список всех категорий статей для фильтрации и навигации",
+    tags=["Insights"],
+    responses={200: InsightCategorySerializer(many=True)}
+)
+class InsightCategoryListView(generics.ListAPIView):
+    """Получение категорий статей"""
+    serializer_class = InsightCategorySerializer
+    queryset = InsightCategory.objects.all()
+
+
+@extend_schema(
+    summary="Получить все теги статей",
+    description="Возвращает список всех уникальных тегов из опубликованных статей",
+    tags=["Insights"],
+    responses={200: OpenApiTypes.OBJECT}
+)
+@api_view(['GET'])
+def insight_tags_list(request):
+    """Получение всех уникальных тегов"""
+    from django.db.models import Q
+    from collections import Counter
+    
+    # Получаем все опубликованные статьи
+    insights = Insight.objects.filter(is_published=True)
+    
+    # Собираем все теги
+    all_tags = []
+    for insight in insights:
+        all_tags.extend(insight.get_tags_list())
+    
+    # Убираем дубликаты и сортируем
+    unique_tags = sorted(set(all_tags))
+    
+    return Response({'tags': unique_tags})
+
+
+@extend_schema(
+    summary="Получить список статей",
+    description="Возвращает список опубликованных статей с возможностью фильтрации по категориям, тегам, поиску и рекомендуемым статьям",
+    tags=["Insights"],
+    parameters=[
+        OpenApiParameter(
+            name='category',
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            description='Фильтр по категории (слаг)',
+            required=False,
+            examples=[
+                OpenApiExample('tech', value='tech'),
+                OpenApiExample('business', value='business'),
+            ]
+        ),
+        OpenApiParameter(
+            name='tag',
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            description='Фильтр по тегу',
+            required=False,
+        ),
+        OpenApiParameter(
+            name='search',
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            description='Поиск по заголовку, описанию и тегам',
+            required=False,
+        ),
+        OpenApiParameter(
+            name='featured',
+            type=OpenApiTypes.BOOL,
+            location=OpenApiParameter.QUERY,
+            description='Показать только рекомендуемые статьи',
+            required=False,
+        ),
+    ],
+    responses={200: InsightListSerializer(many=True)}
+)
+class InsightListView(generics.ListAPIView):
+    """Получение списка статей"""
+    serializer_class = InsightListSerializer
+    
+    def get_queryset(self):
+        from django.db.models import Q
+        
+        queryset = Insight.objects.filter(is_published=True)
+        category_slug = self.request.query_params.get('category', None)
+        tag = self.request.query_params.get('tag', None)
+        search = self.request.query_params.get('search', None)
+        featured = self.request.query_params.get('featured', None)
+        
+        if category_slug:
+            queryset = queryset.filter(category__slug=category_slug)
+        
+        if tag:
+            queryset = queryset.filter(tags__icontains=tag)
+        
+        if search:
+            # Поиск по заголовку, описанию и тегам
+            queryset = queryset.filter(
+                Q(title__icontains=search) |
+                Q(excerpt__icontains=search) |
+                Q(tags__icontains=search)
+            )
+        
+        if featured == 'true':
+            queryset = queryset.filter(is_featured=True)
+            
+        return queryset.order_by('-published_date')
+
+
+@extend_schema(
+    summary="Получить статью по slug",
+    description="Возвращает полную информацию о статье включая контент. Автоматически увеличивает счетчик просмотров",
+    tags=["Insights"],
+    responses={200: InsightDetailSerializer, 404: None}
+)
+class InsightDetailView(generics.RetrieveAPIView):
+    """Получение детальной информации о статье"""
+    serializer_class = InsightDetailSerializer
+    lookup_field = 'slug'
+    
+    def get_queryset(self):
+        return Insight.objects.filter(is_published=True)
+    
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Увеличиваем счетчик просмотров
+        instance.views += 1
+        instance.save(update_fields=['views'])
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+
+@extend_schema(
+    summary="Получить контактную информацию",
+    description="Возвращает контактную информацию компании: адрес, телефон, email, соцсети, часы работы",
+    tags=["Contact"],
+    responses={200: ContactInfoSerializer}
+)
+class ContactInfoView(generics.RetrieveAPIView):
+    """Получение контактной информации"""
+    serializer_class = ContactInfoSerializer
+    
+    def get_object(self):
+        return ContactInfo.objects.filter(is_active=True).first()
+
+
+@extend_schema(
+    summary="Отправить сообщение",
+    description="Отправляет сообщение обратной связи. Сообщение будет сохранено в базе данных и доступно в админ-панели",
+    tags=["Contact"],
+    request=ContactMessageSerializer,
+    responses={
+        201: OpenApiExample(
+            'Success',
+            value={'message': 'Сообщение успешно отправлено!'},
+            response_only=True
+        ),
+        400: 'Bad Request - Некорректные данные'
+    }
+)
+class ContactMessageCreateView(generics.CreateAPIView):
+    """Создание сообщения обратной связи"""
+    serializer_class = ContactMessageSerializer
+    queryset = ContactMessage.objects.all()
+    
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(
+            {'message': 'Сообщение успешно отправлено!'}, 
+            status=status.HTTP_201_CREATED
+        )
+
+
+@extend_schema(
+    summary="Получить все данные сайта",
+    description="Возвращает все данные для сайта одним запросом: Hero секции, информацию о компании, партнеров, команду, услуги, рекомендуемые статьи и контактную информацию. Оптимизированный endpoint для загрузки всего контента сайта.",
+    tags=["Website Data"],
+    responses={
+        200: OpenApiExample(
+            'Website Data',
+            value={
+                'hero': 'Массив Hero секций',
+                'about': 'Информация о компании',
+                'partners': 'Массив партнеров',
+                'team': 'Массив членов команды',
+                'services': 'Массив услуг',
+                'insights': 'Массив рекомендуемых статей (максимум 3)',
+                'contact': 'Контактная информация'
+            },
+            response_only=True
+        ),
+        500: 'Internal Server Error'
+    }
+)
+@api_view(['GET'])
+def website_data(request):
+    """
+    Получение всех данных для сайта одним запросом
+    """
+    try:
+        # Hero секции
+        hero_sections = HeroSection.objects.filter(is_active=True).order_by('order')
+        hero_data = HeroSectionSerializer(hero_sections, many=True).data
+        
+        # О нас
+        about = AboutSection.objects.filter(is_active=True).first()
+        about_data = AboutSectionSerializer(about).data if about else {}
+        
+        # Партнеры
+        partners = Partner.objects.filter(is_active=True).order_by('order', 'name')
+        partners_data = PartnerSerializer(partners, many=True).data
+        
+        # Команда
+        team = TeamMember.objects.filter(is_active=True).order_by('order', 'name')
+        team_data = TeamMemberSerializer(team, many=True).data
+        
+        # Услуги
+        services = Service.objects.filter(is_active=True).order_by('order', 'title')
+        services_data = ServiceSerializer(services, many=True).data
+        
+        # Рекомендуемые статьи (минимум 3 статьи)
+        featured_insights = Insight.objects.filter(is_published=True, is_featured=True)[:3]
+        featured_count = featured_insights.count()
+        
+        # Если featured статей меньше 3, дополняем обычными опубликованными
+        if featured_count < 3:
+            remaining_count = 3 - featured_count
+            # Получаем обычные статьи, исключая уже выбранные featured
+            featured_ids = list(featured_insights.values_list('id', flat=True))
+            additional_insights = Insight.objects.filter(
+                is_published=True
+            ).exclude(id__in=featured_ids).order_by('-published_date')[:remaining_count]
+            
+            # Объединяем featured и дополнительные статьи
+            all_insights = list(featured_insights) + list(additional_insights)
+        else:
+            all_insights = featured_insights
+        
+        insights_data = InsightListSerializer(all_insights, many=True).data
+        
+        # Контактная информация
+        contact_info = ContactInfo.objects.filter(is_active=True).first()
+        contact_data = ContactInfoSerializer(contact_info).data if contact_info else {}
+        
+        return Response({
+            'hero': hero_data,
+            'about': about_data,
+            'partners': partners_data,
+            'team': team_data,
+            'services': services_data,
+            'insights': insights_data,
+            'contact': contact_data
+        })
+        
+    except Exception as e:
+        return Response(
+            {'error': 'Ошибка при получении данных сайта'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@extend_schema(
+    summary="Отправить заявку",
+    description="Отправляет заявку с ФИО, номером телефона и сообщением. Заявка будет сохранена в базе данных и доступна в админ-панели для обработки менеджерами.",
+    tags=["Application"],
+    request=ApplicationFormSerializer,
+    responses={
+        201: {
+            'type': 'object',
+            'properties': {
+                'message': {'type': 'string', 'example': 'Заявка успешно отправлена! Мы свяжемся с вами в ближайшее время.'},
+                'id': {'type': 'integer', 'example': 1}
+            }
+        },
+        400: 'Bad Request - Некорректные данные'
+    },
+    examples=[
+        OpenApiExample(
+            'Пример заявки',
+            value={
+                'full_name': 'Иванов Иван Иванович',
+                'phone': '+7 (999) 123-45-67',
+                'message': 'Интересует разработка корпоративного сайта. Просьба связаться для обсуждения деталей.'
+            },
+            request_only=True
+        )
+    ]
+)
+class ApplicationFormCreateView(generics.CreateAPIView):
+    """Создание заявки"""
+    serializer_class = ApplicationFormSerializer
+    queryset = ApplicationForm.objects.all()
+    
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = self.perform_create(serializer)
+        return Response(
+            {
+                'message': 'Заявка успешно отправлена! Мы свяжемся с вами в ближайшее время.',
+                'id': instance.id
+            }, 
+            status=status.HTTP_201_CREATED
+        )
+    
+    def perform_create(self, serializer):
+        return serializer.save()
